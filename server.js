@@ -26,6 +26,9 @@ app.use("/voucher", voucherRoutes);
 
 // Health check
 app.get("/health", (_, res) => res.json({ ok: true }));
+app.get("/", (req, res) => {
+  res.send("Server đang chạy thành công 🚀");
+});
 
 checkExpiredVouchers();
 
