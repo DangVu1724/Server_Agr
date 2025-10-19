@@ -49,6 +49,55 @@ exports.createOrder = async (req, res) => {
 
     const docRef = await db.collection("orders").doc(orderId).set(newOrder);
 
+    if (discountCodeId) {
+      console.log(
+        `Đang xử lý voucher cho user: ${buyerUid}, code: ${discountCodeId}`
+      );
+
+      const userVoucherDocId = `${buyerUid}_${discountCodeId}`;
+      const userVoucherRef = db
+        .collection("user_vouchers")
+        .doc(userVoucherDocId);
+
+      try {
+        await db.runTransaction(async (t) => {
+          const snap = await t.get(userVoucherRef);
+
+          if (!snap.exists) {
+            console.warn(`user_voucher không tồn tại: ${userVoucherDocId}`);
+            return;
+          }
+
+          const data = snap.data();
+          const currentCount = data?.count ?? 0;
+
+          console.log(
+            `Số lượng hiện tại của voucher ${userVoucherDocId}: ${currentCount}`
+          );
+
+          if (currentCount > 1) {
+            t.update(userVoucherRef, {
+              count: FieldValue.increment(-1),
+              usedUpAt: FieldValue.serverTimestamp(),
+            });
+            console.log(
+              `Đã trừ 1 voucher cho user_voucher: ${userVoucherDocId}`
+            );
+          } else {
+            t.update(userVoucherRef, {
+              count: 0,
+              status: used,
+            });
+            console.log(
+              `Đã đánh dấu hết voucher cho user_voucher: ${userVoucherDocId}`
+            );
+          }
+        });
+      } catch (err) {
+        console.error("Lỗi khi xử lý giảm count user_voucher:", err);
+      }
+    }
+
     const sellerSnap = await db.collection("stores").doc(storeId).get();
     if (sellerSnap.exists) {
       const sellerData = sellerSnap.data();
@@ -114,6 +163,12 @@ exports.updateOrderStatus = async (req, res) => {
 
     if (newStatus === "delivered") {
       updateData.deliveredAt = FieldValue.serverTimestamp();
+      const earnedPoints = Math.floor(orderData.totalPrice / 1000);
+      const buyerRef = db.collection("buyers").doc(orderData.buyerUid);
+      await buyerRef.update({
+        points: admin.firestore.FieldValue.increment(earnedPoints),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
     }
 
     await orderRef.update(updateData);

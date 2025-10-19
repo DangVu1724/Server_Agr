@@ -16,7 +16,7 @@ const getRecommendations = async (req, res) => {
       .where('buyerUid', '==', uid)
       .where('status', '==', 'delivered')
       .get();
-
+    
     const boughtCategories = new Set();
     for (const doc of ordersSnap.docs) {
       const order = doc.data();
