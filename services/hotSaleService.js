@@ -5,7 +5,7 @@ const { v4: uuidv4 } = require("uuid");
  * Lấy ngẫu nhiên N cửa hàng active để tham gia hot sale
  */
 async function getRandomStores(limit = 5) {
-  const snapshot = await db.collection("stores").where("isActive", "==", true).get();
+  const snapshot = await db.collection("stores").where("state", "==", "verify").get();
   const allStores = snapshot.docs.map((doc) => doc.id);
   const shuffled = allStores.sort(() => 0.5 - Math.random());
   return shuffled.slice(0, limit);
@@ -57,7 +57,7 @@ async function createHotSale() {
   const promoRef = db.collection("promotions").doc(promotionId);
   batch.set(promoRef, {
     id: promotionId,
-    name: `Hot Sale ${start.getHours()}h-${end.getHours()}h`,
+    title: `Hot Sale ${start.getHours()}h-${end.getHours()}h`,
     type: "hot_sale",
     startTime: start,
     endTime: end,
