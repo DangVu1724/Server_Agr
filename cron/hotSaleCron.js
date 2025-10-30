@@ -1,22 +1,42 @@
 const cron = require("node-cron");
 const hotSaleService = require("../services/hotSaleService");
 
-cron.schedule("0 */3 * * *", async () => {
-  console.log(" Cron: Tạo hot sale mới...");
+async function checkAndCreateHotSale() {
   try {
-    await hotSaleService.createHotSale();
-    console.log("Hot sale mới đã được tạo!");
+    const current = await hotSaleService.getCurrentHotSale();
+    if (!current) {
+      console.log("⚡ Không có hot sale nào còn hạn, tạo mới...");
+      await hotSaleService.createHotSale();
+      console.log("✅ Đã tạo hot sale mới!");
+    } else {
+      console.log(`🔹 Đang có hot sale: ${current.id} (đến ${current.endTime.toDate ? current.endTime.toDate() : current.endTime})`);
+    }
   } catch (error) {
-    console.error("Lỗi tạo hot sale:", error);
+    console.error("❌ Lỗi khi kiểm tra/tạo hot sale:", error);
   }
-});
+}
 
-cron.schedule("0 * * * *", async () => {
-  console.log("Cron: Kiểm tra hot sale hết hạn...");
+async function deactivateExpiredHotSales() {
   try {
     const count = await hotSaleService.deactivateExpiredHotSales();
-    if (count > 0) console.log(`Đã tắt ${count} hot sale hết hạn`);
+    if (count > 0) {
+      console.log(`⚠️ Đã tắt ${count} hot sale hết hạn.`);
+    }
   } catch (error) {
-    console.error("Lỗi khi tắt hot sale:", error);
+    console.error("❌ Lỗi khi tắt hot sale:", error);
   }
+}
+
+// 🔹 Khi server khởi động
+(async () => {
+  console.log("🚀 Khởi động hệ thống Hot Sale...");
+  await deactivateExpiredHotSales();
+  await checkAndCreateHotSale();
+})();
+
+// 🔹 Cron job: chạy mỗi phút để kiểm tra và cập nhật Hot Sale
+cron.schedule("* * * * *", async () => {
+  console.log("⏰ Cron: Kiểm tra hot sale (mỗi phút)...");
+  await deactivateExpiredHotSales();
+  await checkAndCreateHotSale();
 });

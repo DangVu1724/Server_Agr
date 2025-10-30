@@ -50,51 +50,67 @@ exports.createOrder = async (req, res) => {
     const docRef = await db.collection("orders").doc(orderId).set(newOrder);
 
     if (discountCodeId) {
-      console.log(
-        `Đang xử lý voucher cho user: ${buyerUid}, code: ${discountCodeId}`
-      );
+      console.log(`🔍 Xử lý giảm mã: ${discountCodeId} cho user: ${buyerUid}`);
 
       const userVoucherDocId = `${buyerUid}_${discountCodeId}`;
       const userVoucherRef = db
         .collection("user_vouchers")
         .doc(userVoucherDocId);
+      const discountRef = db.collection("discount_codes").doc(discountCodeId);
 
       try {
         await db.runTransaction(async (t) => {
-          const snap = await t.get(userVoucherRef);
+          const userVoucherSnap = await t.get(userVoucherRef);
+          const discountSnap = await t.get(discountRef);
 
-          if (!snap.exists) {
-            console.warn(`user_voucher không tồn tại: ${userVoucherDocId}`);
-            return;
-          }
+          if (userVoucherSnap.exists) {
+            const data = userVoucherSnap.data();
+            const currentCount = data?.count ?? 0;
 
-          const data = snap.data();
-          const currentCount = data?.count ?? 0;
-
-          console.log(
-            `Số lượng hiện tại của voucher ${userVoucherDocId}: ${currentCount}`
-          );
-
-          if (currentCount > 1) {
-            t.update(userVoucherRef, {
-              count: FieldValue.increment(-1),
-              usedUpAt: FieldValue.serverTimestamp(),
-            });
             console.log(
-              `Đã trừ 1 voucher cho user_voucher: ${userVoucherDocId}`
+              `Voucher riêng ${userVoucherDocId}, count hiện tại: ${currentCount}`
             );
-          } else {
-            t.update(userVoucherRef, {
-              count: 0,
-              status: used,
-            });
+
+            if (currentCount > 1) {
+              t.update(userVoucherRef, {
+                count: FieldValue.increment(-1),
+                usedUpAt: FieldValue.serverTimestamp(),
+              });
+              console.log(`Trừ 1 voucher cho ${userVoucherDocId}`);
+            } else {
+              t.update(userVoucherRef, {
+                count: 0,
+                status: "used",
+                usedUpAt: FieldValue.serverTimestamp(),
+              });
+              console.log(`Hết voucher cho ${userVoucherDocId}`);
+            }
+          } else if (discountSnap.exists) {
+            const data = discountSnap.data();
+            const used = data?.used ?? 0;
+            const limit = data?.limit ?? 0;
+
             console.log(
-              `Đã đánh dấu hết voucher cho user_voucher: ${userVoucherDocId}`
+              ` Mã giảm giá chung ${discountCodeId}, used: ${used}/${limit}`
+            );
+
+            if (used < limit) {
+              t.update(discountRef, {
+                used: FieldValue.increment(1),
+                lastUsedAt: FieldValue.serverTimestamp(),
+              });
+              console.log(` Tăng used cho discount code: ${discountCodeId}`);
+            } else {
+              console.warn(`Discount code ${discountCodeId} đã hết lượt dùng.`);
+            }
+          } else {
+            console.warn(
+              ` Không tìm thấy voucher hoặc discount code: ${discountCodeId}`
             );
           }
         });
       } catch (err) {
-        console.error("Lỗi khi xử lý giảm count user_voucher:", err);
+        console.error("Lỗi khi xử lý giảm count/used:", err);
       }
     }
 

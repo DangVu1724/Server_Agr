@@ -5,7 +5,10 @@ const { v4: uuidv4 } = require("uuid");
  * Lấy ngẫu nhiên N cửa hàng active để tham gia hot sale
  */
 async function getRandomStores(limit = 5) {
-  const snapshot = await db.collection("stores").where("state", "==", "verify").get();
+  const snapshot = await db
+    .collection("stores")
+    .where("state", "==", "verify")
+    .get();
   const allStores = snapshot.docs.map((doc) => doc.id);
   const shuffled = allStores.sort(() => 0.5 - Math.random());
   return shuffled.slice(0, limit);
@@ -14,7 +17,7 @@ async function getRandomStores(limit = 5) {
 /**
  * Tạo discount code cho Hot Sale
  */
-async function createHotDiscount(promotionId, start, end) {
+async function createHotDiscount(promotionId, start, end,selectedStores) {
   const discountId = uuidv4();
   const discountRef = db.collection("discount_codes").doc(discountId);
 
@@ -29,8 +32,8 @@ async function createHotDiscount(promotionId, start, end) {
     limit: 100,
     used: 0,
     creatorRole: "admin",
-    storeId: null,
-    promotionId, 
+    storeId: selectedStores,
+    promotionId,
     isActive: true,
     createdAt: new Date(),
   };
@@ -48,9 +51,12 @@ async function createHotSale() {
   const end = new Date(now.getTime() + 3 * 60 * 60 * 1000);
 
   const selectedStores = await getRandomStores(5);
-  const promotionId = `HSALE_${now.toISOString().slice(0, 13).replace(/[-:T]/g, "")}`;
+  const promotionId = `HSALE_${now
+    .toISOString()
+    .slice(0, 13)
+    .replace(/[-:T]/g, "")}`;
 
-  const discountId = await createHotDiscount(promotionId, start, end);
+  const discountId = await createHotDiscount(promotionId, start, end,selectedStores);
 
   const batch = db.batch();
 
@@ -94,7 +100,8 @@ async function deactivateExpiredHotSales() {
   if (expired.empty) return 0;
 
   const batch = db.batch();
-  expired.forEach((doc) => {
+
+  for (const doc of expired.docs) {
     const data = doc.data();
 
     const promoRef = db.collection("promotions").doc(data.id);
@@ -103,18 +110,25 @@ async function deactivateExpiredHotSales() {
     // tắt discount kèm theo
     if (data.discountId) {
       const discountRef = db.collection("discount_codes").doc(data.discountId);
-      batch.update(discountRef, { isActive: false });
+      const discountSnap = await discountRef.get();
+      if (discountSnap.exists) {
+        batch.update(discountRef, { isActive: false });
+      } else {
+        console.warn(`Discount ${data.discountId} không tồn tại, bỏ qua update.`);
+      }
     }
 
     // reset hotSaleId trong các store
-    data.stores.forEach((storeId) => {
-      const storeRef = db.collection("stores").doc(storeId);
-      batch.update(storeRef, { hotSaleId: null });
-    });
-  });
+    if (Array.isArray(data.stores)) {
+      data.stores.forEach((storeId) => {
+        const storeRef = db.collection("stores").doc(storeId);
+        batch.update(storeRef, { hotSaleId: null });
+      });
+    }
+  }
 
   await batch.commit();
-  console.log(`Deactivated ${expired.size} expired Hot Sales`);
+  console.log(` Đã tắt ${expired.size} Hot Sale hết hạn.`);
   return expired.size;
 }
 
