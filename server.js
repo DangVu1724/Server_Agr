@@ -45,6 +45,7 @@ cron.schedule("0 * * * *", () => {
 
 require("./cron/hotSaleCron");
 require("./cron/commissionCron");
+require("./cron/orderCron");
 
 
 // cron.schedule("0 1 * * *", async () => {
