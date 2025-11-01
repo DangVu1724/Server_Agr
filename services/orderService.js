@@ -26,7 +26,7 @@ async function checkUnacceptedOrders() {
 
       // Gửi thông báo cho người bán và người mua
       const storeSnap = await db.collection('stores').doc(order.storeId).get();
-      const buyerSnap = await db.collection('buyers').doc(order.buyerId).get();
+      const buyerSnap = await db.collection('buyers').doc(order.buyerUid).get();
 
       const sendNotification = async (tokens, title, body) => {
         if (tokens && Array.isArray(tokens)) {
