@@ -142,12 +142,12 @@ exports.createOrder = async (req, res) => {
         console.warn("⚠️ Store has no fcmTokens:", storeId);
       }
     } else {
-      console.warn("⚠️ Store not found:", storeId);
+      console.warn("Store not found:", storeId);
     }
 
     res.status(201).json({ id: orderId, ...newOrder });
   } catch (error) {
-    console.error("❌ Error creating order:", error);
+    console.error("Error creating order:", error);
     res.status(500).json({ error: "Failed to create order" });
   }
 };
@@ -158,9 +158,7 @@ exports.updateOrderStatus = async (req, res) => {
     const { newStatus } = req.body;
 
     if (!orderId || !newStatus) {
-      return res
-        .status(400)
-        .json({ error: "orderId và newStatus là bắt buộc" });
+      return res.status(400).json({ error: "orderId và newStatus là bắt buộc" });
     }
 
     const orderRef = db.collection("orders").doc(orderId);
@@ -171,7 +169,6 @@ exports.updateOrderStatus = async (req, res) => {
     }
 
     const orderData = orderSnap.data();
-
     const updateData = {
       status: newStatus,
       updatedAt: FieldValue.serverTimestamp(),
@@ -182,116 +179,99 @@ exports.updateOrderStatus = async (req, res) => {
 
       const earnedPoints = Math.floor(orderData.totalPrice / 1000);
       const buyerRef = db.collection("buyers").doc(orderData.buyerUid);
-
       const buyerSnap = await buyerRef.get();
+
       if (buyerSnap.exists) {
         const buyerData = buyerSnap.data();
+        const currentPoints = buyerData.points || 0;
+        const currentTotalOrders = (buyerData.totalOrders || 0) + 1;
 
-        const newPoints = (buyerData.points || 0) + earnedPoints;
-        const newTotalPoints = (buyerData.totalEarnedPoints || 0) + earnedPoints;
-        const newTotalOrders = (buyerData.totalOrders || 0) + 1;
-
-        //  Hàm tính rank
-        function getRank(points, totalOrders) {
-          if (points >= 5000 || totalOrders >= 50) {
-            return "Diamond";
-          } else if (points >= 2000 || totalOrders >= 20) {
-            return "Gold";
-          } else if (points >= 1000 || totalOrders >= 10) {
-            return "Silver";
-          } else {
-            return "Bronze";
-          }
-        }
-
-        const newRank = getRank(newTotalPoints, newTotalOrders);
+        const newPoints = currentPoints + earnedPoints;
+        const newRank = getRank(newPoints, currentTotalOrders);
+        const oldRank = buyerData.rank || "Bronze";
 
         await buyerRef.update({
           points: newPoints,
-          totalEarnedPoints: newTotalPoints,
-          totalOrders: newTotalOrders,
+          totalOrders: currentTotalOrders,
+          totalPointsEarned: admin.firestore.FieldValue.increment(earnedPoints),
           rank: newRank,
-          updatedAt: FieldValue.serverTimestamp(),
         });
 
-        console.log(
-          `Buyer ${orderData.buyerUid} rank updated to ${newRank} (${newPoints} points, ${newTotalOrders} orders)`
-        );
-      }
-    }
+        console.log(`Updated buyer ${buyerRef.id}: rank ${oldRank} → ${newRank}`);
 
-    // Cập nhật trạng thái đơn hàng
-    await orderRef.update(updateData);
-    console.log(`✅ Order ${orderId} updated to status: ${newStatus}`);
-
-    // --- Gửi thông báo FCM ---
-    if (orderData?.buyerUid) {
-      const buyerSnap = await db
-        .collection("buyers")
-        .doc(orderData.buyerUid)
-        .get();
-
-      if (buyerSnap.exists) {
-        const buyerData = buyerSnap.data();
-        if (buyerData?.fcmTokens && Array.isArray(buyerData.fcmTokens)) {
-          const items = orderData.items || [];
-          let productInfo = "";
-          if (items.length > 0) {
-            const firstItemName = items[0]?.name || "Sản phẩm";
-            if (items.length > 1) {
-              productInfo = `${firstItemName} + ${items.length - 1} sản phẩm khác`;
-            } else {
-              productInfo = firstItemName;
-            }
-          }
-
-          let title = "Cập nhật đơn hàng";
-          let body = "";
-
-          switch (newStatus) {
-            case "confirmed":
-              body = `${productInfo} đã được cửa hàng xác nhận.`;
-              break;
-            case "shipped":
-              body = `${productInfo} đang được giao.`;
-              break;
-            case "delivered":
-              body = `${productInfo} đã được giao thành công.`;
-              break;
-            case "cancelled":
-              body = `${productInfo} đã bị hủy.`;
-              break;
-            default:
-              body = `${productInfo} đã chuyển sang trạng thái: ${newStatus}`;
-          }
-
-          for (const token of buyerData.fcmTokens) {
-            try {
-              const response = await admin.messaging().send({
-                token,
-                notification: { title, body },
-                data: {
-                  type: "order_status_update",
-                  orderId,
-                  status: newStatus,
-                },
-              });
-              console.log(`📩 FCM sent to buyer token: ${token}`, response);
-            } catch (err) {
-              console.error(`❌ Error sending FCM to buyer token: ${token}`, err);
-            }
-          }
-        } else {
-          console.warn("⚠️ Buyer has no fcmTokens:", orderData.buyerUid);
+        if (newRank !== oldRank) {
+          await giveRankUpVoucher(orderData.buyerUid, newRank);
         }
-      } else {
-        console.warn("⚠️ Buyer not found:", orderData.buyerUid);
       }
     }
+
+    await orderRef.update(updateData);
+    console.log(`Order ${orderId} updated to status: ${newStatus}`);
 
     res.status(200).json({ message: "Order updated", orderId, newStatus });
   } catch (error) {
-    console.error("❌ Error updating order status:", error);
+    console.error("Error updating order status:", error);
     res.status(500).json({ error: "Failed to update order status" });
   }
 };
+
+function getRank(points, totalOrders) {
+  if (points >= 5000 || totalOrders >= 50) return "Diamond";
+  if (points >= 2000 || totalOrders >= 20) return "Gold";
+  if (points >= 1000 || totalOrders >= 10) return "Silver";
+  return "Bronze";
+}
+
+// Tặng voucher khi lên rank
+async function giveRankUpVoucher(userId, newRank) {
+  const now = admin.firestore.Timestamp.now();
+  const endDate = admin.firestore.Timestamp.fromDate(
+    new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+  ); // 30 ngày
+
+  // Chọn voucher theo rank
+  const voucherByRank = {
+    Silver: {
+      code: "SILVER10",
+      discountType: "percent",
+      discountValue: 10,
+      minOrderValue: 100000,
+      description: "Giảm 20% cho thành viên Silver ",
+    },
+    Gold: {
+      code: "GOLD15",
+      discountType: "percent",
+      discountValue: 15,
+      minOrderValue: 150000,
+      description: "Giảm 35% cho thành viên Gold ",
+    },
+    Diamond: {
+      code: "DIAMOND20",
+      discountType: "percent",
+      discountValue: 20,
+      minOrderValue: 200000,
+      description: "Giảm 50% cho thành viên Diamond ",
+    },
+  };
+
+  const voucher = voucherByRank[newRank];
+  if (!voucher) return;
+
+  const userVoucher = {
+    voucherId: `${newRank}_${Date.now()}`,
+    userId,
+    code: voucher.code,
+    description: voucher.description,
+    discountType: voucher.discountType,
+    discountValue: voucher.discountValue,
+    minOrderValue: voucher.minOrderValue,
+    startDate: now,
+    endDate,
+    createdAt: now,
+    count: 1,
+    status: "available",
+  };
+
+  await db.collection("user_vouchers").add(userVoucher);
+  console.log(`Tặng voucher ${voucher.code} cho user ${userId} (rank: ${newRank})`);
+}
