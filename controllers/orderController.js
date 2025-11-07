@@ -179,17 +179,52 @@ exports.updateOrderStatus = async (req, res) => {
 
     if (newStatus === "delivered") {
       updateData.deliveredAt = FieldValue.serverTimestamp();
+
       const earnedPoints = Math.floor(orderData.totalPrice / 1000);
       const buyerRef = db.collection("buyers").doc(orderData.buyerUid);
-      await buyerRef.update({
-        points: admin.firestore.FieldValue.increment(earnedPoints),
-        updatedAt: FieldValue.serverTimestamp(),
-      });
+
+      const buyerSnap = await buyerRef.get();
+      if (buyerSnap.exists) {
+        const buyerData = buyerSnap.data();
+
+        const newPoints = (buyerData.points || 0) + earnedPoints;
+        const newTotalPoints = (buyerData.totalEarnedPoints || 0) + earnedPoints;
+        const newTotalOrders = (buyerData.totalOrders || 0) + 1;
+
+        //  Hàm tính rank
+        function getRank(points, totalOrders) {
+          if (points >= 5000 || totalOrders >= 50) {
+            return "Diamond";
+          } else if (points >= 2000 || totalOrders >= 20) {
+            return "Gold";
+          } else if (points >= 1000 || totalOrders >= 10) {
+            return "Silver";
+          } else {
+            return "Bronze";
+          }
+        }
+
+        const newRank = getRank(newTotalPoints, newTotalOrders);
+
+        await buyerRef.update({
+          points: newPoints,
+          totalEarnedPoints: newTotalPoints,
+          totalOrders: newTotalOrders,
+          rank: newRank,
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+
+        console.log(
+          `Buyer ${orderData.buyerUid} rank updated to ${newRank} (${newPoints} points, ${newTotalOrders} orders)`
+        );
+      }
     }
 
+    // Cập nhật trạng thái đơn hàng
     await orderRef.update(updateData);
     console.log(`✅ Order ${orderId} updated to status: ${newStatus}`);
 
+    // --- Gửi thông báo FCM ---
     if (orderData?.buyerUid) {
       const buyerSnap = await db
         .collection("buyers")
@@ -204,13 +239,12 @@ exports.updateOrderStatus = async (req, res) => {
           if (items.length > 0) {
             const firstItemName = items[0]?.name || "Sản phẩm";
             if (items.length > 1) {
-              productInfo = `${firstItemName} + ${
-                items.length - 1
-              } sản phẩm khác`;
+              productInfo = `${firstItemName} + ${items.length - 1} sản phẩm khác`;
             } else {
               productInfo = firstItemName;
             }
           }
+
           let title = "Cập nhật đơn hàng";
           let body = "";
 
@@ -242,19 +276,16 @@ exports.updateOrderStatus = async (req, res) => {
                   status: newStatus,
                 },
               });
-              console.log(`FCM sent to buyer token: ${token}`, response);
+              console.log(`📩 FCM sent to buyer token: ${token}`, response);
             } catch (err) {
-              console.error(
-                `❌ Error sending FCM to buyer token: ${token}`,
-                err
-              );
+              console.error(`❌ Error sending FCM to buyer token: ${token}`, err);
             }
           }
         } else {
-          console.warn("Buyer has no fcmTokens:", orderData.buyerUid);
+          console.warn("⚠️ Buyer has no fcmTokens:", orderData.buyerUid);
         }
       } else {
-        console.warn("Buyer not found:", orderData.buyerUid);
+        console.warn("⚠️ Buyer not found:", orderData.buyerUid);
       }
     }
 
