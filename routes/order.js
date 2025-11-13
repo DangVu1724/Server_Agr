@@ -7,7 +7,7 @@ const { verifyToken } = require('../middleware/auth');
 
 router.post('/', verifyToken, createOrder);
 router.put('/:orderId/status', updateOrderStatus);
-route.put('/:orderId/cancel', verifyToken, require('../controllers/orderController').cancelOrderByBuyer);
+router.put('/:orderId/cancel', verifyToken, require('../controllers/orderController').cancelOrderByBuyer);
 
 
 module.exports = router;
