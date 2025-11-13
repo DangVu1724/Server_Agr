@@ -152,13 +152,56 @@ exports.createOrder = async (req, res) => {
   }
 };
 
+const admin = require("firebase-admin");
+const db = admin.firestore();
+const { FieldValue } = admin.firestore;
+
+// Gửi thông báo FCM
+async function sendNotificationToUser(uid, title, body) {
+  try {
+    const userRef = db.collection("buyers").doc(uid);
+    const userSnap = await userRef.get();
+
+    if (!userSnap.exists) {
+      console.log(`User ${uid} not found for notification`);
+      return;
+    }
+
+    const fcmToken = userSnap.data().fcmToken;
+    if (!fcmToken) {
+      console.log(`User ${uid} has no FCM token`);
+      return;
+    }
+
+    const message = {
+      notification: {
+        title,
+        body,
+      },
+      token: fcmToken,
+      data: {
+        click_action: "FLUTTER_NOTIFICATION_CLICK",
+        screen: "order_detail",
+      },
+    };
+
+    await admin.messaging().send(message);
+    console.log(`Notification sent to user ${uid}: ${title}`);
+  } catch (err) {
+    console.error("Error sending notification:", err);
+  }
+}
+
+// Hàm cập nhật trạng thái đơn hàng
 exports.updateOrderStatus = async (req, res) => {
   try {
     const { orderId } = req.params;
     const { newStatus } = req.body;
 
     if (!orderId || !newStatus) {
-      return res.status(400).json({ error: "orderId và newStatus là bắt buộc" });
+      return res
+        .status(400)
+        .json({ error: "orderId và newStatus là bắt buộc" });
     }
 
     const orderRef = db.collection("orders").doc(orderId);
@@ -174,6 +217,7 @@ exports.updateOrderStatus = async (req, res) => {
       updatedAt: FieldValue.serverTimestamp(),
     };
 
+    // Nếu đơn đã giao
     if (newStatus === "delivered") {
       updateData.deliveredAt = FieldValue.serverTimestamp();
 
@@ -197,12 +241,30 @@ exports.updateOrderStatus = async (req, res) => {
           rank: newRank,
         });
 
-        console.log(`Updated buyer ${buyerRef.id}: rank ${oldRank} → ${newRank}`);
+        console.log(
+          `Updated buyer ${buyerRef.id}: rank ${oldRank} → ${newRank}`
+        );
 
         if (newRank !== oldRank) {
           await giveRankUpVoucher(orderData.buyerUid, newRank);
         }
       }
+
+      //  Gửi thông báo khi giao hàng thành công
+      await sendNotificationToUser(
+        orderData.buyerUid,
+        "Đơn hàng đã giao",
+        "Đơn hàng của bạn đã được giao thành công!"
+      );
+    }
+
+    // Nếu đơn bị huỷ
+    if (newStatus === "cancelled") {
+      await sendNotificationToUser(
+        orderData.sellerUid,
+        "Đơn hàng bị hủy",
+        "Người mua đã hủy đơn hàng của bạn."
+      );
     }
 
     await orderRef.update(updateData);
@@ -241,7 +303,9 @@ exports.cancelOrderByBuyer = async (req, res) => {
 
     // Chỉ cho phép hủy khi đơn đang chờ xác nhận
     if (orderData.status !== "pending") {
-      return res.status(400).json({ error: "Đơn hàng không thể hủy ở trạng thái hiện tại" });
+      return res
+        .status(400)
+        .json({ error: "Đơn hàng không thể hủy ở trạng thái hiện tại" });
     }
 
     // Cập nhật trạng thái đơn hàng
@@ -253,7 +317,10 @@ exports.cancelOrderByBuyer = async (req, res) => {
     console.log(`Buyer ${buyerId} đã hủy đơn hàng ${orderId}`);
 
     // Gửi thông báo đến người bán
-    const storeSnap = await db.collection("stores").doc(orderData.storeId).get();
+    const storeSnap = await db
+      .collection("stores")
+      .doc(orderData.storeId)
+      .get();
 
     if (storeSnap.exists) {
       const storeData = storeSnap.data();
@@ -272,12 +339,16 @@ exports.cancelOrderByBuyer = async (req, res) => {
         }));
 
         await Promise.all(messages.map((msg) => admin.messaging().send(msg)));
-        console.log(`✅ Đã gửi thông báo hủy đơn đến người bán ${orderData.storeId}`);
+        console.log(
+          `✅ Đã gửi thông báo hủy đơn đến người bán ${orderData.storeId}`
+        );
       } else {
         console.warn(`⚠️ Cửa hàng ${orderData.storeId} không có FCM token`);
       }
     } else {
-      console.warn(`⚠️ Không tìm thấy thông tin cửa hàng: ${orderData.storeId}`);
+      console.warn(
+        `⚠️ Không tìm thấy thông tin cửa hàng: ${orderData.storeId}`
+      );
     }
 
     res.status(200).json({
@@ -290,8 +361,6 @@ exports.cancelOrderByBuyer = async (req, res) => {
     res.status(500).json({ error: "Lỗi khi hủy đơn hàng" });
   }
 };
-
-
 
 function getRank(points, totalOrders) {
   if (points >= 5000 || totalOrders >= 50) return "Diamond";
@@ -351,7 +420,7 @@ async function giveRankUpVoucher(userId, newRank) {
   };
 
   await db.collection("user_vouchers").add(userVoucher);
-  console.log(`Tặng voucher ${voucher.code} cho user ${userId} (rank: ${newRank})`);
+  console.log(
+    `Tặng voucher ${voucher.code} cho user ${userId} (rank: ${newRank})`
+  );
 }
-
-
