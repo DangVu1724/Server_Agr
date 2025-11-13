@@ -153,40 +153,50 @@ exports.createOrder = async (req, res) => {
 };
 
 // Gửi thông báo FCM
-async function sendNotificationToUser(uid, title, body) {
+// Gửi thông báo FCM cho người mua (nhiều token)
+async function sendNotificationToBuyer(buyerUid, title, body, data = {}) {
   try {
-    const userRef = db.collection("buyers").doc(uid);
-    const userSnap = await userRef.get();
+    const buyerSnap = await db.collection("buyers").doc(buyerUid).get();
 
-    if (!userSnap.exists) {
-      console.log(`User ${uid} not found for notification`);
+    if (!buyerSnap.exists) {
+      console.log(`Buyer ${buyerUid} not found for notification`);
       return;
     }
 
-    const fcmToken = userSnap.data().fcmToken;
-    if (!fcmToken) {
-      console.log(`User ${uid} has no FCM token`);
+    const buyerData = buyerSnap.data();
+    const fcmTokens = buyerData?.fcmTokens; // mảng token
+
+    if (!fcmTokens || !Array.isArray(fcmTokens) || fcmTokens.length === 0) {
+      console.log(`Buyer ${buyerUid} has no FCM tokens`);
       return;
     }
 
-    const message = {
-      notification: {
-        title,
-        body,
-      },
-      token: fcmToken,
-      data: {
-        click_action: "FLUTTER_NOTIFICATION_CLICK",
-        screen: "order_detail",
-      },
-    };
+    for (const token of fcmTokens) {
+      try {
+        const message = {
+          notification: {
+            title,
+            body,
+          },
+          token,
+          data: {
+            click_action: "FLUTTER_NOTIFICATION_CLICK",
+            screen: "order_detail",
+            ...data,
+          },
+        };
 
-    await admin.messaging().send(message);
-    console.log(`Notification sent to user ${uid}: ${title}`);
+        const response = await admin.messaging().send(message);
+        console.log(`✅ Notification sent to buyer ${buyerUid} token: ${token}`, response);
+      } catch (err) {
+        console.error(`❌ Error sending FCM to token ${token} of buyer ${buyerUid}:`, err);
+      }
+    }
   } catch (err) {
-    console.error("Error sending notification:", err);
+    console.error("Error in sendNotificationToBuyer:", err);
   }
 }
+
 
 // Hàm cập nhật trạng thái đơn hàng
 exports.updateOrderStatus = async (req, res) => {
@@ -247,7 +257,7 @@ exports.updateOrderStatus = async (req, res) => {
       }
 
       //  Gửi thông báo khi giao hàng thành công
-      await sendNotificationToUser(
+      await sendNotificationToBuyer(
         orderData.buyerUid,
         "Đơn hàng đã giao",
         "Đơn hàng của bạn đã được giao thành công!"
@@ -256,7 +266,7 @@ exports.updateOrderStatus = async (req, res) => {
 
     // Nếu đơn bị huỷ
     if (newStatus === "cancelled") {
-      await sendNotificationToUser(
+      await sendNotificationToBuyer(
         orderData.sellerUid,
         "Đơn hàng bị hủy",
         "Người mua đã hủy đơn hàng của bạn."
