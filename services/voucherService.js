@@ -91,7 +91,7 @@ async function checkExpiredVouchers() {
     const snapshot = await db
       .collection("user_vouchers")
       .where("endDate", "<", now)
-      .where("status", "==", "active")
+      .where("status", "==", "available")
       .get();
 
     if (snapshot.empty) {

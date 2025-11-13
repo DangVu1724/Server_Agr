@@ -215,6 +215,84 @@ exports.updateOrderStatus = async (req, res) => {
   }
 };
 
+// Hủy đơn hàng bởi người mua
+exports.cancelOrderByBuyer = async (req, res) => {
+  try {
+    const { orderId, buyerId } = req.body;
+
+    if (!orderId || !buyerId) {
+      return res.status(400).json({ error: "Thiếu orderId hoặc buyerId" });
+    }
+
+    // Lấy thông tin đơn hàng
+    const orderRef = db.collection("orders").doc(orderId);
+    const orderSnap = await orderRef.get();
+
+    if (!orderSnap.exists) {
+      return res.status(404).json({ error: "Không tìm thấy đơn hàng" });
+    }
+
+    const orderData = orderSnap.data();
+
+    // Kiểm tra quyền hủy
+    if (orderData.buyerUid !== buyerId) {
+      return res.status(403).json({ error: "Bạn không có quyền hủy đơn này" });
+    }
+
+    // Chỉ cho phép hủy khi đơn đang chờ xác nhận
+    if (orderData.status !== "pending") {
+      return res.status(400).json({ error: "Đơn hàng không thể hủy ở trạng thái hiện tại" });
+    }
+
+    // Cập nhật trạng thái đơn hàng
+    await orderRef.update({
+      status: "cancelled",
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    console.log(`Buyer ${buyerId} đã hủy đơn hàng ${orderId}`);
+
+    // Gửi thông báo đến người bán
+    const storeSnap = await db.collection("stores").doc(orderData.storeId).get();
+
+    if (storeSnap.exists) {
+      const storeData = storeSnap.data();
+
+      if (storeData.fcmTokens && Array.isArray(storeData.fcmTokens)) {
+        const messages = storeData.fcmTokens.map((token) => ({
+          token,
+          notification: {
+            title: "Đơn hàng bị hủy",
+            body: `Người mua đã hủy đơn hàng #${orderId}`,
+          },
+          data: {
+            type: "order_cancelled",
+            orderId,
+          },
+        }));
+
+        await Promise.all(messages.map((msg) => admin.messaging().send(msg)));
+        console.log(`✅ Đã gửi thông báo hủy đơn đến người bán ${orderData.storeId}`);
+      } else {
+        console.warn(`⚠️ Cửa hàng ${orderData.storeId} không có FCM token`);
+      }
+    } else {
+      console.warn(`⚠️ Không tìm thấy thông tin cửa hàng: ${orderData.storeId}`);
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Đơn hàng đã được hủy thành công",
+      orderId,
+    });
+  } catch (error) {
+    console.error("❌ Lỗi khi hủy đơn hàng:", error);
+    res.status(500).json({ error: "Lỗi khi hủy đơn hàng" });
+  }
+};
+
+
+
 function getRank(points, totalOrders) {
   if (points >= 5000 || totalOrders >= 50) return "Diamond";
   if (points >= 2000 || totalOrders >= 20) return "Gold";
@@ -275,3 +353,5 @@ async function giveRankUpVoucher(userId, newRank) {
   await db.collection("user_vouchers").add(userVoucher);
   console.log(`Tặng voucher ${voucher.code} cho user ${userId} (rank: ${newRank})`);
 }
+
+
