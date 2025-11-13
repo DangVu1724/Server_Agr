@@ -152,10 +152,6 @@ exports.createOrder = async (req, res) => {
   }
 };
 
-const admin = require("firebase-admin");
-const db = admin.firestore();
-const { FieldValue } = admin.firestore;
-
 // Gửi thông báo FCM
 async function sendNotificationToUser(uid, title, body) {
   try {
